@@ -205,6 +205,3 @@ print("One step OK — loss:", float(loss))
 ## Acknowledgments
 
 - **MAESTRO Dataset (v2.0.0)** — MIDI and Audio Edited for Synchronous TRacks and Organization.  
-- Project motivation and plan summarized from the course proposal (Audio → MIDI → Sheet pipeline; CNN+RNN baseline; Transformer extension).
-
-# music-transcription
