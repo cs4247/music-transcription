@@ -52,13 +52,40 @@ class TranscriptionModel(nn.Module):
         """
         return self.model(x)
 
-    def compute_loss(self, logits, targets):
+    def compute_loss(self, logits, targets, lengths=None):
+        """
+        Compute BCE loss between logits and ground truth piano-roll.
+        If sequence lengths are provided, padded time frames are masked out.
+        Args:
+            logits: (B, 88, T')
+            targets: (B, 88, T')
+            lengths: (B,) or None — number of valid time steps per sample
+        """
         # Align time if needed
         if logits.shape[-1] != targets.shape[-1]:
-            # upsample logits along time to target length
             logits = F.interpolate(logits, size=targets.shape[-1],
                                 mode="linear", align_corners=False)
-        return self.criterion(logits, targets)
+
+        # --- If no masking, just return regular BCE ---
+        if lengths is None:
+            return self.criterion(logits, targets)
+        lengths = lengths.to(logits.device)
+
+        # --- Apply mask ---
+        B, P, T = logits.shape
+        device = logits.device
+        mask = torch.arange(T, device=device).unsqueeze(0) < lengths.unsqueeze(1)
+        mask = mask.unsqueeze(1)  # shape (B, 1, T)
+
+        # BCE without reduction
+        loss_per_elem = F.binary_cross_entropy_with_logits(
+            logits, targets, reduction='none'
+        )  # shape (B, 88, T)
+
+        # Zero out masked frames and average
+        masked_loss = loss_per_elem * mask
+        denom = mask.sum() * P  # total valid elements
+        return masked_loss.sum() / denom.clamp_min(1)
 
     @torch.no_grad()
     def predict(self, x, threshold=0.5):

@@ -7,30 +7,34 @@ import pretty_midi
 import numpy as np
 
 class MaestroDataset(Dataset):
-    def __init__(self, root_dir, csv_path=None, year="2017", sr=16000, n_mels=229, hop_length=512, subset_size=None):
+    def __init__(self, root_dir, csv_path=None, year=None, split='train',
+                 sr=16000, n_mels=229, hop_length=512, subset_size=None):
         """
-        Load MAESTRO dataset from the metadata CSV.
+        Load MAESTRO dataset with optional split filtering.
         Args:
             root_dir: path to maestro-v2.0.0/
-            csv_path: optional path to metadata CSV (default: root_dir/maestro-v2.0.0.csv)
-            year: which year folder to use (e.g., "2017")
-            sr: audio sample rate
-            n_mels: number of mel frequency bins
-            hop_length: hop length for STFT
-            subset_size: optional int to limit samples for testing
+            csv_path: optional path to metadata CSV
+            year: optional specific year (e.g. "2017")
+            split: one of {"train", "validation", "test"}
+            subset_size: limit dataset size for debugging
         """
         self.root_dir = root_dir
         self.sr = sr
         self.n_mels = n_mels
         self.hop_length = hop_length
 
-        # Load metadata
+        # Load metadata CSV
         if csv_path is None:
             csv_path = os.path.join(root_dir, "maestro-v2.0.0.csv")
         self.df = pd.read_csv(csv_path)
 
-        # Filter by year
-        self.df = self.df[self.df["year"] == int(year)]
+        # Filter by year (optional)
+        if year is not None:
+            self.df = self.df[self.df["year"] == int(year)]
+
+        # Filter by official MAESTRO split (train/validation/test)
+        if split is not None:
+            self.df = self.df[self.df["split"] == split]
 
         # Optionally take a small subset for debugging
         if subset_size:

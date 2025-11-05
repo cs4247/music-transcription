@@ -1,6 +1,7 @@
 import torch
 from torch.utils.data import DataLoader
 import torch.optim as optim
+from torch.amp import autocast, GradScaler
 from tqdm import tqdm
 
 from data.dataset import MaestroDataset
@@ -8,57 +9,61 @@ from models.transcription_model import TranscriptionModel
 
 import torch.nn.functional as F
 
-def collate_fn(batch, max_len=None):
+from torch.amp import autocast
+
+def collate_fn(batch):
     """
-    Pads (mel, roll) pairs in a batch to the same time dimension.
-    Args:
-        batch: list of (mel_tensor, roll_tensor)
-        max_len: optional int, truncate or pad to this max length
+    Pad variable-length spectrograms and rolls to the same temporal length.
+    Returns mel_batch, roll_batch, and valid lengths per sample.
     """
     mels, rolls = zip(*batch)
+    lengths = [m.shape[-1] for m in mels]  # number of valid time frames
+    max_T = max(lengths)
 
-    # Find the longest sample in the batch (or use provided max_len)
-    max_T = max([mel.shape[-1] for mel in mels])
-    if max_len is not None:
-        max_T = min(max_T, max_len)
+    mel_padded = [torch.nn.functional.pad(m, (0, max_T - m.shape[-1])) for m in mels]
+    roll_padded = [torch.nn.functional.pad(r, (0, max_T - r.shape[-1])) for r in rolls]
 
-    padded_mels, padded_rolls = [], []
+    mel_batch = torch.stack(mel_padded)
+    roll_batch = torch.stack(roll_padded)
+    lengths = torch.tensor(lengths, dtype=torch.long)
 
-    for mel, roll in zip(mels, rolls):
-        T = mel.shape[-1]
-        pad_T = max_T - T
-        if pad_T > 0:
-            mel = F.pad(mel, (0, pad_T))
-            roll = F.pad(roll, (0, pad_T))
-        elif pad_T < 0:
-            mel = mel[:, :, :max_T]
-            roll = roll[:, :max_T]
-        padded_mels.append(mel)
-        padded_rolls.append(roll)
+    return mel_batch, roll_batch, lengths
 
-    batch_mels = torch.stack(padded_mels)
-    batch_rolls = torch.stack(padded_rolls)
-    return batch_mels, batch_rolls
-
-
-# Training helper
 def train_one_epoch(model, dataloader, optimizer, device):
     model.train()
-    total_loss = 0.0
+    scaler = GradScaler()
 
-    for mel, roll in tqdm(dataloader, desc="Training", leave=False):
+    total_loss = 0.0
+    step_losses = []
+
+    # Initialize tqdm progress bar
+    progress_bar = tqdm(dataloader, desc="Training", leave=False)
+    
+    for mel, roll, lengths in progress_bar:
         mel, roll = mel.to(device), roll.to(device)
 
-        optimizer.zero_grad()
-        logits = model(mel)
-        loss = model.compute_loss(logits, roll)
-        loss.backward()
-        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
 
-        total_loss += loss.item()
+        # Mixed precision forward
+        with autocast('cuda'):
+            logits = model(mel)
+            loss = model.compute_loss(logits, roll, lengths)
+
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+
+        # Update running totals
+        step_loss = loss.item()
+        total_loss += step_loss
+        step_losses.append(step_loss)
+
+        # Update tqdm bar dynamically
+        progress_bar.set_postfix({"step_loss": f"{step_loss:.4f}"})
 
     avg_loss = total_loss / len(dataloader)
-    return avg_loss
+    progress_bar.close()
+    return avg_loss, step_losses
 
 # Validation helper
 @torch.no_grad()
@@ -66,11 +71,16 @@ def evaluate(model, dataloader, device):
     model.eval()
     total_loss = 0.0
 
-    for mel, roll in tqdm(dataloader, desc="Validation", leave=False):
-        mel, roll = mel.to(device), roll.to(device)
-        logits = model(mel)
-        loss = model.compute_loss(logits, roll)
-        total_loss += loss.item()
+    with torch.no_grad():
+        for mel, roll, lengths in tqdm(dataloader, desc="Validation", leave=False):
+            mel, roll = mel.to(device), roll.to(device)
+
+            # Use mixed precision for inference
+            with autocast('cuda'):
+                logits = model(mel)
+                loss = model.compute_loss(logits, roll, lengths)
+
+            total_loss += loss.item()
 
     avg_loss = total_loss / len(dataloader)
     return avg_loss
