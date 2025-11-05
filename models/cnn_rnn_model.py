@@ -24,12 +24,12 @@ class CNNRNNModel(nn.Module):
         self.n_mels = n_mels
         self.hidden_size = hidden_size
 
-        # --- 1️⃣ CNN Frontend (extract frequency–time features) ---
+        # CNN Frontend
         self.cnn = nn.Sequential(
             nn.Conv2d(1, 32, kernel_size=(3, 3), padding=(1, 1)),
             nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=(2, 2)),  # (n_mels // 2, T // 2)
+            nn.MaxPool2d(kernel_size=(2, 1)),  # (n_mels // 2, T // 2)
 
             nn.Conv2d(32, 64, kernel_size=(3, 3), padding=(1, 1)),
             nn.BatchNorm2d(64),
@@ -37,7 +37,7 @@ class CNNRNNModel(nn.Module):
             nn.MaxPool2d(kernel_size=(2, 1)),  # downsample frequency only
         )
 
-        # --- 2️⃣ Recurrent Layer (temporal modeling) ---
+        # Recurrent Layer (temporal modeling)
         # Flatten frequency dimension → time sequence
         # Input to LSTM = channels * freq_bins_after_cnn
         freq_bins_after = n_mels // 4  # due to 2x2 and 2x1 pooling
@@ -52,7 +52,7 @@ class CNNRNNModel(nn.Module):
             bidirectional=True,
         )
 
-        # --- 3️⃣ Output Projection (frame-wise classification) ---
+        # Output Projection (frame-wise classification)
         self.fc = nn.Linear(hidden_size * 2, 88)  # 88 piano keys
 
     def forward(self, x):
@@ -61,7 +61,7 @@ class CNNRNNModel(nn.Module):
         """
         B, _, _, T = x.shape
 
-        # --- CNN ---
+        # CNN
         features = self.cnn(x)  # (B, C, F', T')
         B, C, F, T_new = features.shape
 
@@ -69,10 +69,10 @@ class CNNRNNModel(nn.Module):
         features = features.permute(0, 3, 1, 2).contiguous()  # (B, T', C, F')
         features = features.view(B, T_new, C * F)  # (B, T', lstm_input_size)
 
-        # --- RNN ---
+        # RNN
         rnn_out, _ = self.rnn(features)  # (B, T', 2*hidden_size)
 
-        # --- Output ---
+        # Output
         logits = self.fc(rnn_out)  # (B, T', 88)
         logits = logits.permute(0, 2, 1)  # (B, 88, T')
         return logits

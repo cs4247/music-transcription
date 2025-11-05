@@ -41,8 +41,7 @@ def collate_fn(batch, max_len=None):
     return batch_mels, batch_rolls
 
 
-# ---------------------------------------------------------------------
-# 1️⃣ Training helper
+# Training helper
 def train_one_epoch(model, dataloader, optimizer, device):
     model.train()
     total_loss = 0.0
@@ -61,9 +60,7 @@ def train_one_epoch(model, dataloader, optimizer, device):
     avg_loss = total_loss / len(dataloader)
     return avg_loss
 
-
-# ---------------------------------------------------------------------
-# 2️⃣ Validation helper
+# Validation helper
 @torch.no_grad()
 def evaluate(model, dataloader, device):
     model.eval()
@@ -78,9 +75,7 @@ def evaluate(model, dataloader, device):
     avg_loss = total_loss / len(dataloader)
     return avg_loss
 
-
-# ---------------------------------------------------------------------
-# 3️⃣ Main training function (can be imported in notebook)
+# Main training function (can be imported in notebook)
 def train_model(
     root_dir="maestro-v2.0.0",
     year="2017",
@@ -110,7 +105,7 @@ def train_model(
         collate_fn=lambda b: collate_fn(b, max_len=12000)
 )
 
-    # --- Model ---
+    # Model
     model = TranscriptionModel(model_type="cnn_rnn", device=device)
 
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -128,13 +123,11 @@ def train_model(
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save(model.state_dict(), save_path)
-            print(f"✅ Saved new best model to {save_path}")
+            print(f"Saved new best model to {save_path}")
 
     return model
 
-
-# ---------------------------------------------------------------------
-# 4️⃣ CLI entrypoint
+# CLI entrypoint
 if __name__ == "__main__":
     train_model(
         root_dir="maestro-v2.0.0",

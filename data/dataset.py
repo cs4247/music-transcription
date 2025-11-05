@@ -50,12 +50,12 @@ class MaestroDataset(Dataset):
         if not os.path.exists(audio_path) and audio_path.endswith(".wav"):
             audio_path = audio_path.replace(".wav", ".mp3")
 
-        # --- Load and process audio ---
+        # Load and process audio ---
         y, _ = librosa.load(audio_path, sr=self.sr, mono=True)
         mel = librosa.feature.melspectrogram(y=y, sr=self.sr, n_mels=self.n_mels, hop_length=self.hop_length)
         mel = librosa.power_to_db(mel).astype(np.float32)
 
-        # --- Load and process MIDI ---
+        # Load and process MIDI ---
         midi_data = pretty_midi.PrettyMIDI(midi_path)
         fs = self.sr / self.hop_length
         roll = midi_data.get_piano_roll(fs=fs)[21:109]  # 88 keys (A0–C8)

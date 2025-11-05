@@ -42,7 +42,6 @@ class TranscriptionModel(nn.Module):
 
         self.to(device)
 
-    # -------------------------------------------------------------------------
     def forward(self, x):
         """
         Forward pass through the model.
@@ -53,7 +52,6 @@ class TranscriptionModel(nn.Module):
         """
         return self.model(x)
 
-    # -------------------------------------------------------------------------
     def compute_loss(self, logits, targets):
         # Align time if needed
         if logits.shape[-1] != targets.shape[-1]:
@@ -62,7 +60,6 @@ class TranscriptionModel(nn.Module):
                                 mode="linear", align_corners=False)
         return self.criterion(logits, targets)
 
-    # -------------------------------------------------------------------------
     @torch.no_grad()
     def predict(self, x, threshold=0.5):
         """
