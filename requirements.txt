@@ -1,0 +1,30 @@
+# Core deep learning framework
+torch>=2.0.0
+
+# Data processing
+pandas>=2.0.0
+numpy>=1.23.0
+
+# Audio processing
+librosa>=0.10.0
+soundfile>=0.12.1
+
+# MIDI processing
+pretty_midi>=0.2.10
+mido>=1.3.0
+
+# Visualization
+matplotlib>=3.5.0
+
+# Utilities
+tqdm>=4.60.0
+
+# Scientific computing (installed as dependency of librosa)
+scipy>=1.6.0
+scikit-learn>=1.0.0
+
+# Additional dependencies (typically installed automatically)
+# audioread>=2.1.9
+# joblib>=1.0
+# numba>=0.51.0
+# soxr>=0.3.2

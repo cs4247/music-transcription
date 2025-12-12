@@ -1,23 +1,60 @@
+# IDE
 .vscode/
 .idea/
 
+# Virtual environments
 venv/
 .env/
+env/
 
+# Datasets (raw)
+maestro-v3.0.0/
 maestro-v2.0.0/
-maestro-v2.0.0.zip
+maestro*/
+*.zip
+*.tar.gz
+*.tar
 
+# Cached/preprocessed datasets
+cached_dataset/
+
+# Training outputs
+outputs/
+checkpoints/
+logs/
+
+# Model files
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+
+# Log files
+*.log
+nohup.out
+preprocess.log
+
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
 
-outputs/
-checkpoints/
-*.pth
-*.pt
-*.log
-
+# Jupyter
 .ipynb_checkpoints/
+*.ipynb_checkpoints
 
+# OS
 .DS_Store
 Thumbs.db
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.temp

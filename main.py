@@ -59,17 +59,28 @@ def plot_step_losses(global_step_losses, num_epochs, save_path):
 
 def main():
     parser = argparse.ArgumentParser(description="Train music transcription model")
-    parser.add_argument("--root_dir", type=str, default="maestro-v2.0.0", help="Path to MAESTRO dataset root")
+    parser.add_argument("--root_dir", type=str, default="maestro-v3.0.0", help="Path to MAESTRO dataset root")
     parser.add_argument("--year", type=str, default=None, help="Subset year (e.g. 2017)")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
     parser.add_argument("--epochs", type=int, default=25, help="Number of training epochs")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--subset_size", type=int, default=None, help="Limit dataset size for debugging")
     parser.add_argument("--save_every", type=int, default=10, help="Save model checkpoint every N epochs")
+    parser.add_argument("--chunk_length", type=float, default=None, help="Chunk length in seconds (e.g. 30.0). If None, loads full files")
+    parser.add_argument("--chunk_overlap", type=float, default=0.0, help="Overlap ratio between chunks (0.0-1.0, e.g. 0.25 for 25%% overlap)")
+    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from (e.g. outputs/.../checkpoints/model_epoch_15.pth)")
+    parser.add_argument("--start_epoch", type=int, default=1, help="Starting epoch number (auto-detected if resuming)")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
+
+    # Print chunking configuration
+    if args.chunk_length:
+        print(f"Chunking enabled: {args.chunk_length}s chunks with {args.chunk_overlap*100:.0f}% overlap")
+    else:
+        print("Chunking disabled: loading full files")
+
     # print(torch.cuda.memory_summary(device=device, abbreviated=True)) GPU memory debugging
 
     # Output structure ---
@@ -84,9 +95,27 @@ def main():
     loss_plot_path = os.path.join(logs_dir, "loss_curve.png")
     step_plot_path = os.path.join(logs_dir, "loss_per_step.png")
 
-    # Data
-    train_ds = MaestroDataset(args.root_dir, split="train", year=args.year, subset_size=args.subset_size)
-    val_ds   = MaestroDataset(args.root_dir, split="validation", year=args.year, subset_size=args.subset_size)
+    # Data - use cached dataset if available, otherwise fall back to raw
+    from data.cached_dataset import HybridMaestroDataset
+
+    train_ds = HybridMaestroDataset(
+        root_dir=args.root_dir,
+        cache_dir="cached_dataset",
+        split="train",
+        year=args.year,
+        subset_size=args.subset_size,
+        chunk_length=args.chunk_length,
+        overlap=args.chunk_overlap
+    )
+    val_ds = HybridMaestroDataset(
+        root_dir=args.root_dir,
+        cache_dir="cached_dataset",
+        split="validation",
+        year=args.year,
+        subset_size=args.subset_size,
+        chunk_length=args.chunk_length,
+        overlap=0.0  # No overlap for validation
+    )
     # test_ds  = MaestroDataset(args.root_dir, split="test", year=args.year)
 
     # Nicely formatted parameters.txt
@@ -96,15 +125,52 @@ def main():
         file.write(f"Device: {device}\n\n")
         for k, v in vars(args).items():
             file.write(f"{k:>15}: {v}\n")
-        file.write(f"Training dataset size: {len(train_ds)}\n")
-        file.write(f"Validation dataset size: {len(val_ds)}\n")
+        file.write(f"\n=== Dataset Info ===\n")
+        file.write(f"Training dataset size: {len(train_ds)} {'chunks' if args.chunk_length else 'files'}\n")
+        file.write(f"Validation dataset size: {len(val_ds)} {'chunks' if args.chunk_length else 'files'}\n")
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
+        shuffle=True,
+        collate_fn=collate_fn,
+        num_workers=8,  # Balanced worker count
+        pin_memory=True,  # Faster GPU transfer
+        persistent_workers=True,  # Keep workers alive between epochs
+        prefetch_factor=2  # Prefetch 2 batches per worker
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        collate_fn=collate_fn,
+        num_workers=4,
+        pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=2
+    )
 
     # Model & optimizer
     model = TranscriptionModel(model_type="cnn_rnn", device=device)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
+
+    # Resume from checkpoint if specified
+    start_epoch = args.start_epoch
+    if args.resume:
+        if os.path.exists(args.resume):
+            print(f"Resuming from checkpoint: {args.resume}")
+            model.load_state_dict(torch.load(args.resume, map_location=device))
+
+            # Auto-detect epoch from filename if not specified
+            if args.start_epoch == 1:  # User didn't specify start_epoch
+                import re
+                match = re.search(r'epoch[_\-](\d+)', args.resume)
+                if match:
+                    start_epoch = int(match.group(1)) + 1
+                    print(f"Auto-detected: resuming from epoch {start_epoch}")
+            print(f"Loaded model weights from {args.resume}")
+        else:
+            print(f"Warning: Checkpoint not found at {args.resume}, starting from scratch")
 
     # Logging
     train_losses, val_losses = [], []
@@ -114,10 +180,13 @@ def main():
     with open(log_txt_path, "w") as log_file:
         log_file.write(f"Training started: {timestamp}\n")
         log_file.write(f"Device: {device}\n")
+        if args.resume:
+            log_file.write(f"Resumed from: {args.resume}\n")
+            log_file.write(f"Starting at epoch: {start_epoch}\n")
         log_file.write(f"Epochs: {args.epochs}, Batch size: {args.batch_size}, LR: {args.lr}\n\n")
 
         # Training loop
-        for epoch in range(1, args.epochs + 1):
+        for epoch in range(start_epoch, args.epochs + 1):
             print(f"\nEpoch {epoch}/{args.epochs}")
             # print(torch.cuda.memory_summary(device=device, abbreviated=True)) #GPU memory debugging
 

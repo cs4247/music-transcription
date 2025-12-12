@@ -87,7 +87,7 @@ def evaluate(model, dataloader, device):
 
 # Main training function (can be imported in notebook)
 def train_model(
-    root_dir="maestro-v2.0.0",
+    root_dir="maestro-v3.0.0",
     year="2017",
     batch_size=4,
     num_epochs=5,
@@ -95,24 +95,44 @@ def train_model(
     subset_size=None,
     device=None,
     save_path="checkpoints/cnn_rnn.pth",
+    chunk_length=None,
+    chunk_overlap=0.0,
 ):
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     # --- Dataset ---
-    train_set = MaestroDataset(root_dir=root_dir, year=year, subset_size=subset_size)
-    val_set = MaestroDataset(root_dir=root_dir, year=year, subset_size=subset_size // 5 if subset_size else 10)
+    train_set = MaestroDataset(
+        root_dir=root_dir,
+        year=year,
+        split='train',
+        subset_size=subset_size,
+        chunk_length=chunk_length,
+        overlap=chunk_overlap
+    )
+    val_set = MaestroDataset(
+        root_dir=root_dir,
+        year=year,
+        split='validation',
+        subset_size=subset_size // 5 if subset_size else None,
+        chunk_length=chunk_length,
+        overlap=0.0  # No overlap for validation
+    )
+
+    print(f"Train set size: {len(train_set)} {'chunks' if chunk_length else 'files'}")
+    print(f"Validation set size: {len(val_set)} {'chunks' if chunk_length else 'files'}")
+
     train_loader = DataLoader(
         train_set,
         batch_size=batch_size,
         shuffle=True,
-        collate_fn=lambda b: collate_fn(b, max_len=12000)  # or None for dynamic padding
+        collate_fn=collate_fn
     )
 
     val_loader = DataLoader(
         val_set,
         batch_size=batch_size,
-        collate_fn=lambda b: collate_fn(b, max_len=12000)
+        collate_fn=collate_fn
 )
 
     # Model
@@ -140,10 +160,12 @@ def train_model(
 # CLI entrypoint
 if __name__ == "__main__":
     train_model(
-        root_dir="maestro-v2.0.0",
+        root_dir="maestro-v3.0.0",
         year="2017",
         batch_size=2,
         num_epochs=3,
         lr=1e-4,
         subset_size=20,
+        chunk_length=30.0,  # 30-second chunks
+        chunk_overlap=0.25,  # 25% overlap for data augmentation
     )
