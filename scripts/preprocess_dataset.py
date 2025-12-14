@@ -19,6 +19,42 @@ import pickle
 import subprocess
 from datetime import datetime
 import shutil
+from multiprocessing import Pool
+
+
+def _process_single_chunk(args):
+    """
+    Process a single chunk for parallel execution.
+
+    Args:
+        args: tuple of (idx, dataset_params, cache_path, force)
+
+    Returns:
+        tuple: (success: bool, skipped: bool)
+    """
+    idx, dataset_params, cache_path, force = args
+
+    # Skip if already cached (unless force mode)
+    if os.path.exists(cache_path) and not force:
+        return (True, True)  # success, skipped
+
+    try:
+        # Create dataset instance (each worker needs its own)
+        dataset = MaestroDataset(**dataset_params)
+
+        # Load and process chunk
+        mel_tensor, roll_tensor = dataset[idx]
+
+        # Save to disk
+        torch.save({
+            'mel': mel_tensor,
+            'roll': roll_tensor
+        }, cache_path)
+
+        return (True, False)  # success, not skipped
+    except Exception as e:
+        print(f"\nError processing chunk {idx}: {e}")
+        return (False, False)  # failed
 
 
 def preprocess_and_cache(
@@ -30,7 +66,8 @@ def preprocess_and_cache(
     sr=16000,
     hop_length=512,
     split='train',
-    force=False
+    force=False,
+    num_workers=1
 ):
     """
     Pre-process entire dataset and save to disk.
@@ -45,6 +82,9 @@ def preprocess_and_cache(
     - Pre-computed tensors saved as .pt files (fast to load)
 
     Expected speedup: 10-50x during training!
+
+    Args:
+        num_workers: Number of parallel workers (1 = sequential, >1 = parallel)
     """
 
     print(f"Loading dataset metadata for {split} split...")
@@ -59,6 +99,8 @@ def preprocess_and_cache(
     )
 
     print(f"Found {len(dataset)} chunks to preprocess")
+    if num_workers > 1:
+        print(f"Using {num_workers} parallel workers")
 
     # Create cache directory
     split_cache_dir = os.path.join(cache_dir, split)
@@ -83,41 +125,86 @@ def preprocess_and_cache(
     print(f"Preprocessing {len(dataset)} chunks...")
     print(f"Cache directory: {split_cache_dir}")
 
-    # Process all chunks with enhanced progress bar
+    # Prepare arguments for parallel processing
+    dataset_params = {
+        'root_dir': root_dir,
+        'split': split,
+        'chunk_length': chunk_length,
+        'overlap': overlap,
+        'n_mels': n_mels,
+        'sr': sr,
+        'hop_length': hop_length
+    }
+
+    chunk_args = [
+        (idx, dataset_params, os.path.join(split_cache_dir, f'chunk_{idx:06d}.pt'), force)
+        for idx in range(len(dataset))
+    ]
+
+    # Process chunks
     skipped = 0
     cached = 0
+    failed = 0
 
-    with tqdm(total=len(dataset),
-              desc=f"Caching {split}",
-              unit="chunk",
-              bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]') as pbar:
+    if num_workers > 1:
+        # Parallel processing
+        with Pool(processes=num_workers) as pool:
+            with tqdm(total=len(dataset),
+                      desc=f"Caching {split}",
+                      unit="chunk",
+                      bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]') as pbar:
 
-        for idx in range(len(dataset)):
-            cache_path = os.path.join(split_cache_dir, f'chunk_{idx:06d}.pt')
+                for success, was_skipped in pool.imap_unordered(_process_single_chunk, chunk_args):
+                    if success:
+                        if was_skipped:
+                            skipped += 1
+                        else:
+                            cached += 1
+                    else:
+                        failed += 1
 
-            # Skip if already cached (unless force mode)
-            if os.path.exists(cache_path) and not force:
-                skipped += 1
+                    pbar.update(1)
+                    pbar.set_postfix({'cached': cached, 'skipped': skipped, 'failed': failed})
+    else:
+        # Sequential processing (original behavior)
+        with tqdm(total=len(dataset),
+                  desc=f"Caching {split}",
+                  unit="chunk",
+                  bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]') as pbar:
+
+            for idx in range(len(dataset)):
+                cache_path = os.path.join(split_cache_dir, f'chunk_{idx:06d}.pt')
+
+                # Skip if already cached (unless force mode)
+                if os.path.exists(cache_path) and not force:
+                    skipped += 1
+                    pbar.update(1)
+                    pbar.set_postfix({'cached': cached, 'skipped': skipped})
+                    continue
+
+                try:
+                    # Load and process chunk (this is the slow part)
+                    mel_tensor, roll_tensor = dataset[idx]
+
+                    # Save to disk
+                    torch.save({
+                        'mel': mel_tensor,
+                        'roll': roll_tensor
+                    }, cache_path)
+
+                    cached += 1
+                except Exception as e:
+                    print(f"\nError processing chunk {idx}: {e}")
+                    failed += 1
+
                 pbar.update(1)
-                pbar.set_postfix({'cached': cached, 'skipped': skipped})
-                continue
-
-            # Load and process chunk (this is the slow part)
-            mel_tensor, roll_tensor = dataset[idx]
-
-            # Save to disk
-            torch.save({
-                'mel': mel_tensor,
-                'roll': roll_tensor
-            }, cache_path)
-
-            cached += 1
-            pbar.update(1)
-            pbar.set_postfix({'cached': cached, 'skipped': skipped})
+                pbar.set_postfix({'cached': cached, 'skipped': skipped, 'failed': failed})
 
     print(f"\nPreprocessing complete for {split} split!")
     print(f"  Cached: {cached} chunks")
     print(f"  Skipped: {skipped} chunks (already existed)")
+    if failed > 0:
+        print(f"  Failed: {failed} chunks (errors occurred)")
     print(f"  Total size: ~{estimate_cache_size(split_cache_dir):.1f} GB")
 
 
@@ -397,8 +484,11 @@ Examples:
   # Custom mel bins (IMPORTANT: must match your model!)
   python preprocess_dataset.py --n_mels 320
 
-  # Run in background with automatic logging
-  python preprocess_dataset.py --n_mels 320 --background
+  # Use parallel processing with 16 workers (much faster!)
+  python preprocess_dataset.py --n_mels 320 -j 16
+
+  # Run in background with automatic logging and parallel processing
+  python preprocess_dataset.py --n_mels 320 -j 16 --background
 
   # Preview what will be created
   python preprocess_dataset.py --n_mels 320 --dry_run
@@ -465,6 +555,11 @@ IMPORTANT:
     parser.add_argument(
         "--force", action="store_true",
         help="Overwrite existing cache files (default: False)"
+    )
+    parser.add_argument(
+        "-j", "--num_workers", type=int, default=1,
+        help="Number of parallel workers for preprocessing (default: 1). Use -j 16 for 16 workers. "
+             "Recommended: use number of CPU cores or less."
     )
 
     # Background execution
@@ -582,6 +677,7 @@ IMPORTANT:
     print(f"Mel bins:      {args.n_mels}")
     print(f"Sample rate:   {args.sr}")
     print(f"Hop length:    {args.hop_length}")
+    print(f"Workers:       {args.num_workers} {'(parallel)' if args.num_workers > 1 else '(sequential)'}")
     print(f"Force:         {'Yes' if args.force else 'No'}")
     print("=" * 70)
     print()
@@ -606,7 +702,8 @@ IMPORTANT:
                 sr=args.sr,
                 hop_length=args.hop_length,
                 split=split,
-                force=args.force
+                force=args.force,
+                num_workers=args.num_workers
             )
 
             # Track size for summary
