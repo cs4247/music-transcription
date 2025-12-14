@@ -23,6 +23,9 @@ tqdm>=4.60.0
 scipy>=1.6.0
 scikit-learn>=1.0.0
 
+# Transformer models (optional, for AST model)
+transformers>=4.30.0
+
 # Additional dependencies (typically installed automatically)
 # audioread>=2.1.9
 # joblib>=1.0

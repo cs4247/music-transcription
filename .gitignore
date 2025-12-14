@@ -17,6 +17,7 @@ maestro*/
 
 # Cached/preprocessed datasets
 cached_dataset/
+cached_dataset_*/
 
 # Training outputs
 outputs/

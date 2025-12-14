@@ -9,7 +9,7 @@ import numpy as np
 class MaestroDataset(Dataset):
     def __init__(self, root_dir, csv_path=None, year=None, split='train',
                  sr=16000, n_mels=229, hop_length=512, subset_size=None,
-                 chunk_length=None, overlap=0.0):
+                 chunk_length=None, overlap=0.0, return_waveform=False):
         """
         Load MAESTRO dataset with optional split filtering and chunking.
         Args:
@@ -20,6 +20,7 @@ class MaestroDataset(Dataset):
             subset_size: limit dataset size for debugging
             chunk_length: duration in seconds for each chunk. If None, loads full files.
             overlap: overlap ratio between chunks (0.0 to 1.0). E.g., 0.5 = 50% overlap.
+            return_waveform: if True, return raw waveform instead of mel spectrogram
         """
         self.root_dir = root_dir
         self.sr = sr
@@ -27,6 +28,7 @@ class MaestroDataset(Dataset):
         self.hop_length = hop_length
         self.chunk_length = chunk_length
         self.overlap = overlap
+        self.return_waveform = return_waveform
 
         # Load metadata CSV
         if csv_path is None:
@@ -127,9 +129,6 @@ class MaestroDataset(Dataset):
             duration=(end_sample - start_sample) / self.sr
         )
 
-        mel = librosa.feature.melspectrogram(y=y, sr=self.sr, n_mels=self.n_mels, hop_length=self.hop_length)
-        mel = librosa.power_to_db(mel).astype(np.float32)
-
         # Load MIDI and extract corresponding time range
         midi_data = pretty_midi.PrettyMIDI(midi_path)
         fs = self.sr / self.hop_length
@@ -146,16 +145,26 @@ class MaestroDataset(Dataset):
 
         roll = (full_roll > 0).astype(np.float32)
 
-        # Align time frames between mel and roll
-        min_len = min(mel.shape[1], roll.shape[1])
-        mel = mel[:, :min_len]
-        roll = roll[:, :min_len]
+        if self.return_waveform:
+            # Return raw waveform and piano roll (for AST model)
+            waveform_tensor = torch.tensor(y, dtype=torch.float32)
+            roll_tensor = torch.tensor(roll)  # (88, T)
+            return waveform_tensor, roll_tensor
+        else:
+            # Return mel spectrogram and piano roll (for CNN-RNN model)
+            mel = librosa.feature.melspectrogram(y=y, sr=self.sr, n_mels=self.n_mels, hop_length=self.hop_length)
+            mel = librosa.power_to_db(mel).astype(np.float32)
 
-        # Convert to tensors
-        mel_tensor = torch.tensor(mel).unsqueeze(0)  # (1, n_mels, T)
-        roll_tensor = torch.tensor(roll)             # (88, T)
+            # Align time frames between mel and roll
+            min_len = min(mel.shape[1], roll.shape[1])
+            mel = mel[:, :min_len]
+            roll = roll[:, :min_len]
 
-        return mel_tensor, roll_tensor
+            # Convert to tensors
+            mel_tensor = torch.tensor(mel).unsqueeze(0)  # (1, n_mels, T)
+            roll_tensor = torch.tensor(roll)             # (88, T)
+
+            return mel_tensor, roll_tensor
 
     def _get_full_file(self, idx):
         """Load a complete file (original behavior)."""
@@ -169,8 +178,6 @@ class MaestroDataset(Dataset):
 
         # Load and process audio ---
         y, _ = librosa.load(audio_path, sr=self.sr, mono=True)
-        mel = librosa.feature.melspectrogram(y=y, sr=self.sr, n_mels=self.n_mels, hop_length=self.hop_length)
-        mel = librosa.power_to_db(mel).astype(np.float32)
 
         # Load and process MIDI ---
         midi_data = pretty_midi.PrettyMIDI(midi_path)
@@ -178,13 +185,23 @@ class MaestroDataset(Dataset):
         roll = midi_data.get_piano_roll(fs=fs)[21:109]  # 88 keys (A0–C8)
         roll = (roll > 0).astype(np.float32)
 
-        # Align time frames between mel and roll
-        min_len = min(mel.shape[1], roll.shape[1])
-        mel = mel[:, :min_len]
-        roll = roll[:, :min_len]
+        if self.return_waveform:
+            # Return raw waveform and piano roll (for AST model)
+            waveform_tensor = torch.tensor(y, dtype=torch.float32)
+            roll_tensor = torch.tensor(roll)  # (88, T)
+            return waveform_tensor, roll_tensor
+        else:
+            # Return mel spectrogram and piano roll (for CNN-RNN model)
+            mel = librosa.feature.melspectrogram(y=y, sr=self.sr, n_mels=self.n_mels, hop_length=self.hop_length)
+            mel = librosa.power_to_db(mel).astype(np.float32)
 
-        # Convert to tensors
-        mel_tensor = torch.tensor(mel).unsqueeze(0)  # (1, n_mels, T)
-        roll_tensor = torch.tensor(roll)             # (88, T)
+            # Align time frames between mel and roll
+            min_len = min(mel.shape[1], roll.shape[1])
+            mel = mel[:, :min_len]
+            roll = roll[:, :min_len]
 
-        return mel_tensor, roll_tensor
+            # Convert to tensors
+            mel_tensor = torch.tensor(mel).unsqueeze(0)  # (1, n_mels, T)
+            roll_tensor = torch.tensor(roll)             # (88, T)
+
+            return mel_tensor, roll_tensor

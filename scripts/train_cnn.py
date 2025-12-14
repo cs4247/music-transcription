@@ -115,6 +115,7 @@ Examples:
     # Execution mode
     parser.add_argument("--background", action="store_true", help="Run training in background mode with log file")
     parser.add_argument("--log_file", type=str, default=None, help="Log file path for background mode (auto-generated if not specified)")
+    parser.add_argument("--run_dir", type=str, default=None, help="Output directory for this training run (auto-generated if not specified)")
 
     args = parser.parse_args()
 
@@ -123,14 +124,19 @@ Examples:
         import sys
         import subprocess
 
-        # Generate log filename with timestamp
+        # Create output directory structure for this run
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        log_file = args.log_file or f"train_{timestamp}.log"
+        run_dir = os.path.join("outputs", timestamp)
+        logs_dir = os.path.join(run_dir, "logs")
+        os.makedirs(logs_dir, exist_ok=True)
 
-        # Build command without --background flag
+        # Generate log filename in the run's logs directory
+        log_file = args.log_file or os.path.join(logs_dir, "train.log")
+
+        # Build command without --background flag but with --run_dir
         cmd_args = [sys.executable, "scripts/train_cnn.py"] + [
             arg for arg in sys.argv[1:] if arg != '--background'
-        ]
+        ] + ["--run_dir", run_dir]
 
         # Launch subprocess with output redirected to log file
         with open(log_file, 'w') as log:
@@ -142,6 +148,7 @@ Examples:
             )
 
         print(f"Training started in background (PID: {process.pid})")
+        print(f"Output directory: {run_dir}")
         print(f"Log file: {log_file}")
         print(f"Monitor with: tail -f {log_file}")
         sys.exit(0)
@@ -158,8 +165,13 @@ Examples:
     # print(torch.cuda.memory_summary(device=device, abbreviated=True)) GPU memory debugging
 
     # Output structure ---
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    run_dir = os.path.join("outputs", timestamp)
+    # Use provided run_dir or create a new one
+    if args.run_dir:
+        run_dir = args.run_dir
+    else:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        run_dir = os.path.join("outputs", timestamp)
+
     checkpoint_dir = os.path.join(run_dir, "checkpoints")
     logs_dir = os.path.join(run_dir, "logs")
     os.makedirs(checkpoint_dir, exist_ok=True)
@@ -193,7 +205,7 @@ Examples:
     # test_ds  = MaestroDataset(args.root_dir, split="test", year=args.year)
 
     # Validate n_mels matches cache if using cached data
-    if train_ds.using_cache:
+    if train_ds.use_cache:
         import pickle
         metadata_path = os.path.join(args.cached_dir, 'train_metadata.pkl')
         if os.path.exists(metadata_path):
@@ -240,7 +252,7 @@ Examples:
         file.write(f"\n=== Dataset Info ===\n")
         file.write(f"Training dataset size: {len(train_ds)} {'chunks' if args.chunk_length else 'files'}\n")
         file.write(f"Validation dataset size: {len(val_ds)} {'chunks' if args.chunk_length else 'files'}\n")
-        file.write(f"Using cache: {train_ds.using_cache}\n")
+        file.write(f"Using cache: {train_ds.use_cache}\n")
 
     train_loader = DataLoader(
         train_ds,
