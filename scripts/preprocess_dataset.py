@@ -27,12 +27,12 @@ def _process_single_chunk(args):
     Process a single chunk for parallel execution.
 
     Args:
-        args: tuple of (idx, dataset_params, cache_path, force)
+        args: tuple of (idx, dataset_params, cache_path, force, return_waveform)
 
     Returns:
         tuple: (success: bool, skipped: bool)
     """
-    idx, dataset_params, cache_path, force = args
+    idx, dataset_params, cache_path, force, return_waveform = args
 
     # Skip if already cached (unless force mode)
     if os.path.exists(cache_path) and not force:
@@ -43,13 +43,19 @@ def _process_single_chunk(args):
         dataset = MaestroDataset(**dataset_params)
 
         # Load and process chunk
-        mel_tensor, roll_tensor = dataset[idx]
+        data_tensor, roll_tensor = dataset[idx]
 
-        # Save to disk
-        torch.save({
-            'mel': mel_tensor,
-            'roll': roll_tensor
-        }, cache_path)
+        # Save to disk with appropriate key
+        if return_waveform:
+            torch.save({
+                'waveform': data_tensor,
+                'roll': roll_tensor
+            }, cache_path)
+        else:
+            torch.save({
+                'mel': data_tensor,
+                'roll': roll_tensor
+            }, cache_path)
 
         return (True, False)  # success, not skipped
     except Exception as e:
@@ -67,7 +73,8 @@ def preprocess_and_cache(
     hop_length=512,
     split='train',
     force=False,
-    num_workers=1
+    num_workers=1,
+    return_waveform=False
 ):
     """
     Pre-process entire dataset and save to disk.
@@ -88,6 +95,9 @@ def preprocess_and_cache(
     """
 
     print(f"Loading dataset metadata for {split} split...")
+    data_type = "waveform" if return_waveform else "mel"
+    print(f"Data type: {data_type}")
+
     dataset = MaestroDataset(
         root_dir=root_dir,
         split=split,
@@ -95,7 +105,8 @@ def preprocess_and_cache(
         overlap=overlap,
         n_mels=n_mels,
         sr=sr,
-        hop_length=hop_length
+        hop_length=hop_length,
+        return_waveform=return_waveform
     )
 
     print(f"Found {len(dataset)} chunks to preprocess")
@@ -116,7 +127,9 @@ def preprocess_and_cache(
         'chunks': dataset.chunks if hasattr(dataset, 'chunks') else None,
         'sr': sr,
         'n_mels': n_mels,
-        'hop_length': hop_length
+        'hop_length': hop_length,
+        'return_waveform': return_waveform,
+        'data_type': data_type
     }
 
     with open(os.path.join(cache_dir, f'{split}_metadata.pkl'), 'wb') as f:
@@ -133,11 +146,12 @@ def preprocess_and_cache(
         'overlap': overlap,
         'n_mels': n_mels,
         'sr': sr,
-        'hop_length': hop_length
+        'hop_length': hop_length,
+        'return_waveform': return_waveform
     }
 
     chunk_args = [
-        (idx, dataset_params, os.path.join(split_cache_dir, f'chunk_{idx:06d}.pt'), force)
+        (idx, dataset_params, os.path.join(split_cache_dir, f'chunk_{idx:06d}.pt'), force, return_waveform)
         for idx in range(len(dataset))
     ]
 
@@ -184,13 +198,19 @@ def preprocess_and_cache(
 
                 try:
                     # Load and process chunk (this is the slow part)
-                    mel_tensor, roll_tensor = dataset[idx]
+                    data_tensor, roll_tensor = dataset[idx]
 
-                    # Save to disk
-                    torch.save({
-                        'mel': mel_tensor,
-                        'roll': roll_tensor
-                    }, cache_path)
+                    # Save to disk with appropriate key
+                    if return_waveform:
+                        torch.save({
+                            'waveform': data_tensor,
+                            'roll': roll_tensor
+                        }, cache_path)
+                    else:
+                        torch.save({
+                            'mel': data_tensor,
+                            'roll': roll_tensor
+                        }, cache_path)
 
                     cached += 1
                 except Exception as e:
@@ -478,29 +498,29 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic usage (default settings)
-  python preprocess_dataset.py
+  # Cache mel spectrograms for CNN-RNN (default)
+  python preprocess_dataset.py --n_mels 229 -j 16
+
+  # Cache waveforms for AST/transformer models
+  python preprocess_dataset.py --waveform -j 16
 
   # Custom mel bins (IMPORTANT: must match your model!)
-  python preprocess_dataset.py --n_mels 320
-
-  # Use parallel processing with 16 workers (much faster!)
   python preprocess_dataset.py --n_mels 320 -j 16
 
   # Run in background with automatic logging and parallel processing
-  python preprocess_dataset.py --n_mels 320 -j 16 --background
+  python preprocess_dataset.py --waveform -j 16 --background
 
   # Preview what will be created
-  python preprocess_dataset.py --n_mels 320 --dry_run
+  python preprocess_dataset.py --waveform --dry_run
 
   # Process only specific splits
-  python preprocess_dataset.py --splits train,validation
+  python preprocess_dataset.py --waveform --splits train,validation
 
   # Show existing cache info
-  python preprocess_dataset.py --show_cache_info cached_dataset_mels320
+  python preprocess_dataset.py --show_cache_info cached_dataset_waveform
 
   # Force overwrite existing cache
-  python preprocess_dataset.py --n_mels 320 --force
+  python preprocess_dataset.py --waveform --force -j 16
 
 IMPORTANT:
   The n_mels parameter MUST match your model configuration!
@@ -545,6 +565,17 @@ IMPORTANT:
     parser.add_argument(
         "--overlap", type=float, default=0.0,
         help="Overlap ratio between chunks [0.0, 1.0), e.g., 0.25 = 25%% overlap (default: 0.0)"
+    )
+
+    # Data type selection
+    data_type_group = parser.add_mutually_exclusive_group()
+    data_type_group.add_argument(
+        "--waveform", action="store_true",
+        help="Cache raw waveforms for AST/transformer models (default: False, cache mel spectrograms)"
+    )
+    data_type_group.add_argument(
+        "--mel", action="store_true",
+        help="Cache mel spectrograms for CNN-RNN models (default behavior)"
     )
 
     # Processing options
@@ -623,9 +654,14 @@ IMPORTANT:
         print("=" * 70)
         sys.exit(0)
 
-    # Auto-generate cache directory name based on n_mels
+    # Determine data type
+    return_waveform = args.waveform  # Default is False (mel spectrograms)
+
+    # Auto-generate cache directory name based on data type and n_mels
     if args.cache_dir is None:
-        if args.n_mels == 229:
+        if return_waveform:
+            args.cache_dir = "cached_dataset_waveform"
+        elif args.n_mels == 229:
             args.cache_dir = "cached_dataset"  # Default for backward compatibility
         else:
             args.cache_dir = f"cached_dataset_mels{args.n_mels}"
@@ -672,9 +708,9 @@ IMPORTANT:
     print(f"Source:        {args.root_dir}")
     print(f"Cache:         {args.cache_dir}")
     print(f"Splits:        {', '.join(splits)}")
+    print(f"Data type:     {'Waveform (AST)' if return_waveform else f'Mel spectrogram (CNN-RNN, n_mels={args.n_mels})'}")
     print(f"Chunk length:  {args.chunk_length}s")
     print(f"Overlap:       {args.overlap * 100:.0f}%")
-    print(f"Mel bins:      {args.n_mels}")
     print(f"Sample rate:   {args.sr}")
     print(f"Hop length:    {args.hop_length}")
     print(f"Workers:       {args.num_workers} {'(parallel)' if args.num_workers > 1 else '(sequential)'}")
@@ -703,7 +739,8 @@ IMPORTANT:
                 hop_length=args.hop_length,
                 split=split,
                 force=args.force,
-                num_workers=args.num_workers
+                num_workers=args.num_workers,
+                return_waveform=return_waveform
             )
 
             # Track size for summary

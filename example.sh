@@ -10,7 +10,7 @@
 #   ./example.sh preprocess   # Preprocess dataset and create cache
 #   ./example.sh train        # Train the model with cached data
 #   ./example.sh eval         # Evaluate the best trained model
-#   ./example.sh all          # Run all steps sequentially (WARNING: Takes hours!)
+#   ./example.sh all          # Run all steps sequentially
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -71,10 +71,10 @@ show_usage() {
     echo "Usage: $0 <command>"
     echo ""
     echo "Commands:"
-    echo "  preprocess    Preprocess dataset and create cache (~1-2 hours)"
-    echo "  train         Train the model with cached data (~10-20 hours)"
-    echo "  eval          Evaluate the best trained model (~30 minutes)"
-    echo "  all           Run all steps sequentially (WARNING: Takes 12+ hours!)"
+    echo "  preprocess    Preprocess dataset and create cache"
+    echo "  train         Train the model with cached data"
+    echo "  eval          Evaluate the best trained model"
+    echo "  all           Run all steps sequentially."
     echo ""
     echo "Examples:"
     echo "  ./example.sh preprocess   # Only preprocess the dataset"
@@ -92,7 +92,6 @@ run_preprocess() {
     print_config
 
     echo "This will create a cached dataset at: $CACHE_DIR"
-    echo "Estimated time: 1-2 hours"
     echo "Estimated disk space: ~34GB"
     echo ""
 
@@ -137,7 +136,6 @@ run_train() {
     fi
 
     echo "Using cached dataset: $CACHE_DIR"
-    echo "Estimated time: 10-20 hours for $EPOCHS epochs"
     echo ""
 
     # Create outputs directory
@@ -217,11 +215,9 @@ run_eval() {
 run_all() {
     print_header "Running Complete Pipeline"
     echo "WARNING: This will run all three steps sequentially:"
-    echo "  1. Preprocess dataset (~1-2 hours)"
-    echo "  2. Train model (~10-20 hours)"
-    echo "  3. Evaluate model (~30 minutes)"
-    echo ""
-    echo "Total estimated time: 12-24 hours"
+    echo "  1. Preprocess dataset"
+    echo "  2. Train model"
+    echo "  3. Evaluate model"
     echo ""
 
     read -p "Are you sure you want to continue? (y/N) " -n 1 -r
