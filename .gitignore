@@ -22,6 +22,7 @@ cached_dataset/
 outputs/
 checkpoints/
 logs/
+eval_outputs/
 
 # Model files
 *.pth

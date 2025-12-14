@@ -29,16 +29,17 @@ def collate_fn(batch):
 
     return mel_batch, roll_batch, lengths
 
-def train_one_epoch(model, dataloader, optimizer, device):
+def train_one_epoch(model, dataloader, optimizer, device, max_grad_norm=1.0):
     model.train()
     scaler = GradScaler()
 
     total_loss = 0.0
     step_losses = []
+    nan_count = 0
 
     # Initialize tqdm progress bar
     progress_bar = tqdm(dataloader, desc="Training", leave=False)
-    
+
     for mel, roll, lengths in progress_bar:
         mel, roll = mel.to(device), roll.to(device)
 
@@ -49,7 +50,28 @@ def train_one_epoch(model, dataloader, optimizer, device):
             logits = model(mel)
             loss = model.compute_loss(logits, roll, lengths)
 
+        # Check for NaN loss before backward
+        if torch.isnan(loss) or torch.isinf(loss):
+            nan_count += 1
+            print(f"\n⚠ Warning: NaN/Inf loss detected (count: {nan_count}), skipping batch")
+            if nan_count > 10:
+                raise RuntimeError("Too many NaN losses - training unstable!")
+            continue
+
         scaler.scale(loss).backward()
+
+        # Gradient clipping (critical for large models with attention)
+        scaler.unscale_(optimizer)
+        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+
+        # Check for NaN gradients
+        if torch.isnan(grad_norm):
+            nan_count += 1
+            print(f"\n⚠ Warning: NaN gradients detected (count: {nan_count}), skipping batch")
+            optimizer.zero_grad(set_to_none=True)
+            scaler.update()
+            continue
+
         scaler.step(optimizer)
         scaler.update()
 
@@ -58,10 +80,13 @@ def train_one_epoch(model, dataloader, optimizer, device):
         total_loss += step_loss
         step_losses.append(step_loss)
 
-        # Update tqdm bar dynamically
-        progress_bar.set_postfix({"step_loss": f"{step_loss:.4f}"})
+        # Update tqdm bar dynamically with gradient norm
+        progress_bar.set_postfix({
+            "step_loss": f"{step_loss:.4f}",
+            "grad_norm": f"{grad_norm:.2f}"
+        })
 
-    avg_loss = total_loss / len(dataloader)
+    avg_loss = total_loss / len(dataloader) if len(step_losses) > 0 else float('nan')
     progress_bar.close()
     return avg_loss, step_losses
 
