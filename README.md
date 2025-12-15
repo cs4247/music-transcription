@@ -67,9 +67,6 @@ Two CNN-RNN transcription models are provided through a unified interface.
 | Training Speed | Fast | ~2.5× slower |
 | Typical Framewise F1 | 0.70–0.78 | 0.85–0.90 |
 
-### Important note
-When enabled, **onset/offset heads affect training loss**, but **MIDI export currently uses frame activations only**. Integration of onset/offset heads into post-processing is planned.
-
 ---
 
 ## Repository structure
