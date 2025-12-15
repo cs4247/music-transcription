@@ -414,7 +414,7 @@ python scripts/preprocess_dataset.py --help
 ```
 
 **Common Arguments:**
-- `--n_mels` - **CRITICAL**: Number of mel bins, MUST match your model (default: 229)
+- `--n_mels` - Number of mel bins, must match the model (default: 229)
 - `--root_dir` - Path to MAESTRO dataset (default: `maestro-v3.0.0`)
 - `--cache_dir` - Output cache directory (auto-generated based on n_mels if not specified)
 - `--sr` - Sample rate in Hz (default: 16000)
@@ -527,25 +527,6 @@ cached_dataset_mels320/
 └── test_metadata.pkl
 ```
 
-### Important: Parameter Compatibility
-
-**The preprocessing parameters MUST match your model configuration!**
-
-If your model uses:
-```python
-TranscriptionModel(n_mels=320)
-```
-
-Then preprocess with:
-```bash
-python scripts/preprocess_dataset.py --n_mels 320
-```
-
-**The script validates this automatically:**
-- Cache directories are auto-named based on n_mels to prevent conflicts
-- Attempting to use incompatible parameters will trigger a validation error
-- Use `--force` only if you intentionally want to overwrite
-
 ### Validation & Safety Features
 
 The enhanced preprocessing script includes:
@@ -556,23 +537,6 @@ The enhanced preprocessing script includes:
 4. **Verification**: Optional `--verify` flag to check cache integrity
 5. **Resume support**: Automatically skips already-cached chunks
 
-### Migration from Old Script
-
-If you previously used `preprocess_mels320.sh`:
-
-**Old way:**
-```bash
-./preprocess_mels320.sh
-```
-
-**New way (equivalent):**
-```bash
-python scripts/preprocess_dataset.py --n_mels 320 --background
-```
-
-The shell script still works but shows a deprecation notice. The Python version provides better validation, progress tracking, and more features.
-
----
 
 ## Model Evaluation
 
@@ -807,51 +771,6 @@ Status: COMPATIBLE
 ======================================================================
 ```
 
-### Migration from Old Scripts
-
-If you previously used the separate evaluation scripts:
-
-**Old:** `evaluate_model.py`
-```bash
-python evaluate_model.py --model_path outputs/model.pth --split test
-```
-
-**New:**
-```bash
-python scripts/evaluate.py --model outputs/model.pth --split test
-```
-
----
-
-**Old:** `quick_eval.sh`
-```bash
-./quick_eval.sh
-```
-
-**New:**
-```bash
-python scripts/evaluate.py --model outputs/model.pth \
-  --split validation --subset 100
-```
-
----
-
-**Old:** `tune_threshold_cached.sh`
-```bash
-MODEL=outputs/model.pth ./tune_threshold_cached.sh
-```
-
-**New:**
-```bash
-python scripts/evaluate.py --model outputs/model.pth \
-  --tune_threshold --split validation --subset 50
-```
-
----
-
-The old scripts still work but display deprecation warnings. The unified CLI provides better validation, progress tracking, and more features.
-
----
 
 ## What's implemented so far
 
