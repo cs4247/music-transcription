@@ -9,6 +9,38 @@ This repository implements the core pipeline for **automatic musical transcripti
 
 ---
 
+## Usage
+
+The [main.py](main.py) script provides a complete inference pipeline to transcribe audio files to MIDI using a trained model.
+
+**Basic usage:**
+```bash
+python main.py <audio_file> <model_checkpoint>
+```
+
+**Example:**
+```bash
+# Transcribe a piano recording to MIDI
+python main.py my_piano.mp3 outputs/2025-12-13_20-11-33/checkpoints/model_final.pth
+
+# Specify custom output path and threshold
+python main.py recording.wav model.pth -o output.mid -t 0.45
+
+# Use GPU for faster inference
+python main.py song.mp3 model.pth -d cuda
+```
+
+**Arguments:**
+- `audio_file` - Path to input audio file (mp3, wav, etc.)
+- `model_file` - Path to trained model checkpoint (.pth)
+- `-o, --output` - Output MIDI file path (default: `<audio_name>_transcription.mid`)
+- `-d, --device` - Device for inference: `cpu` or `cuda` (default: auto-detect)
+- `-t, --threshold` - Prediction threshold 0.0-1.0 (default: 0.5)
+
+The script automatically splits long audio files into 30-second chunks, processes them through the model, and combines the results into a single MIDI file.
+
+---
+
 ## Repository Structure
 
 ```
