@@ -204,13 +204,6 @@ python main.py recording.wav model.pth -d cuda
 
 Edit variables at the top of [example.sh](example.sh) to configure runs.
 
----
-
-## Current limitations & roadmap
-- Output is MIDI, not sheet music
-- Evaluation uses framewise F1 only
-- MIDI post-processing is simple (no sustain modeling)
-- Transformer / AST / REMI pipelines are scaffolded but not production-ready yet
 
 ---
 
