@@ -67,6 +67,26 @@ def collate_ast(batch, max_token_len: int = 256):
 
     return waveforms_list, token_tensor
 
+def collate_ast_tokenized(batch):
+    """
+    Fast collate function for pre-tokenized AST data.
+    Used when dataset already contains tokens (no CPU tokenization needed).
+
+    Args:
+        batch: List of (waveform, tokens) tuples from cached dataset
+
+    Returns:
+        waveforms_list: List of waveform tensors
+        token_tensor: Tensor of token sequences (B, L)
+    """
+    waveforms, token_tensors = zip(*batch)
+
+    # Stack tokens into batch
+    token_tensor = torch.stack(token_tensors)
+    waveforms_list = list(waveforms)
+
+    return waveforms_list, token_tensor
+
 def train_one_epoch(model, dataloader, optimizer, device, max_grad_norm=1.0):
     model.train()
     scaler = GradScaler()
@@ -183,6 +203,7 @@ def train_model(
     chunk_length=None,
     chunk_overlap=0.0,
     model_type="cnn_rnn",
+    cached_dir=None,
     **model_kwargs
 ):
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -192,45 +213,95 @@ def train_model(
     return_waveform = model_type in ["ast", "transformer", "audio_transformer"]
 
     # --- Dataset ---
-    train_set = MaestroDataset(
-        root_dir=root_dir,
-        year=year,
-        split='train',
-        subset_size=subset_size,
-        chunk_length=chunk_length,
-        overlap=chunk_overlap,
-        return_waveform=return_waveform
-    )
-    val_set = MaestroDataset(
-        root_dir=root_dir,
-        year=year,
-        split='validation',
-        subset_size=subset_size // 5 if subset_size else None,
-        chunk_length=chunk_length,
-        overlap=0.0,  # No overlap for validation
-        return_waveform=return_waveform
-    )
+    # Try to use cached dataset if available
+    use_tokenized_cache = False
+    if cached_dir:
+        try:
+            from data.cached_dataset import CachedMaestroDataset
+            print(f"Loading from cache: {cached_dir}")
+
+            train_set = CachedMaestroDataset(
+                cache_dir=cached_dir,
+                split='train'
+            )
+            val_set = CachedMaestroDataset(
+                cache_dir=cached_dir,
+                split='validation'
+            )
+
+            # Check if this is a tokenized cache
+            import pickle
+            metadata_path = os.path.join(cached_dir, 'train_metadata.pkl')
+            with open(metadata_path, 'rb') as f:
+                metadata = pickle.load(f)
+            use_tokenized_cache = metadata.get('tokenize', False)
+
+            if use_tokenized_cache:
+                print("✓ Using pre-tokenized cache (MAXIMUM SPEED!)")
+            else:
+                print("Successfully loaded cached dataset!")
+        except Exception as e:
+            print(f"Warning: Could not load cached dataset: {e}")
+            print("Falling back to raw dataset loading...")
+            cached_dir = None
+
+    # Fallback to raw dataset
+    if not cached_dir:
+        train_set = MaestroDataset(
+            root_dir=root_dir,
+            year=year,
+            split='train',
+            subset_size=subset_size,
+            chunk_length=chunk_length,
+            overlap=chunk_overlap,
+            return_waveform=return_waveform
+        )
+        val_set = MaestroDataset(
+            root_dir=root_dir,
+            year=year,
+            split='validation',
+            subset_size=subset_size // 5 if subset_size else None,
+            chunk_length=chunk_length,
+            overlap=0.0,  # No overlap for validation
+            return_waveform=return_waveform
+        )
 
     print(f"Train set size: {len(train_set)} {'chunks' if chunk_length else 'files'}")
     print(f"Validation set size: {len(val_set)} {'chunks' if chunk_length else 'files'}")
 
     # Select appropriate collate function
-    if return_waveform:
+    if use_tokenized_cache:
+        # Pre-tokenized cache: use fast collate (no CPU tokenization!)
+        collate_used = collate_ast_tokenized
+    elif return_waveform:
+        # Regular AST: tokenize during collate (slow!)
         collate_used = collate_ast
     else:
+        # CNN-RNN: pad mels
         collate_used = collate_fn
+
+    # Use multiple workers for parallel data loading
+    # More workers for tokenized cache (pure I/O), fewer for regular cache (CPU tokenization)
+    num_workers = 8 if use_tokenized_cache else (4 if cached_dir else 0)
 
     train_loader = DataLoader(
         train_set,
         batch_size=batch_size,
         shuffle=True,
-        collate_fn=collate_used
+        collate_fn=collate_used,
+        num_workers=num_workers,
+        pin_memory=True,  # Faster CPU->GPU transfer
+        prefetch_factor=2 if num_workers > 0 else None,  # Pre-load 2 batches per worker
+        persistent_workers=True if num_workers > 0 else False  # Keep workers alive between epochs
     )
 
     val_loader = DataLoader(
         val_set,
         batch_size=batch_size,
-        collate_fn=collate_used
+        collate_fn=collate_used,
+        num_workers=num_workers,
+        pin_memory=True,
+        prefetch_factor=2 if num_workers > 0 else None
     )
 
     # Model

@@ -43,17 +43,8 @@ import pickle
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import numpy as np
-import torch
-from torch.utils.data import DataLoader, Subset
-from sklearn.metrics import f1_score
-import pretty_midi
-from tqdm import tqdm
-
-from data.dataset import MaestroDataset
-from data.cached_dataset import CachedMaestroDataset
-from train.train_transcriber import collate_fn
-from models.transcription_model import TranscriptionModel
+# Defer heavy imports until after argparse to make --help fast
+# These will be imported in main() after argument parsing
 
 
 # ============================================================================
@@ -351,6 +342,8 @@ def run_evaluation(args, model, dataloader, dataset_info):
     fs = dataset_info['fs']
 
     all_f1 = []
+    all_preds = []  # Collect all predictions for confusion matrix
+    all_targets = []  # Collect all targets for confusion matrix
 
     if args.headless:
         # Headless mode: minimal output, no file writing
@@ -378,6 +371,9 @@ def run_evaluation(args, model, dataloader, dataset_info):
 
                 f1 = f1_score(y_true, y_pred, zero_division=0)
                 all_f1.append(f1)
+
+                all_preds.append(y_pred)
+                all_targets.append(y_true)
 
         mean_f1 = float(np.mean(all_f1)) if all_f1 else 0.0
         print(f"EVAL_MEAN_F1={mean_f1:.6f}")
@@ -437,6 +433,9 @@ def run_evaluation(args, model, dataloader, dataset_info):
                 f1 = f1_score(y_true, y_pred, zero_division=0)
                 all_f1.append(f1)
 
+                all_preds.append(y_pred)
+                all_targets.append(y_true)
+
                 # Get metadata for naming (if available)
                 if has_metadata:
                     ds = test_ds.dataset if hasattr(test_ds, 'dataset') else test_ds
@@ -488,6 +487,31 @@ def run_evaluation(args, model, dataloader, dataset_info):
             print(f"Summary written to: {summary_path}")
             if not args.no_midi:
                 print(f"MIDIs written to:   {midi_dir}")
+
+        # Generate and save confusion matrix
+        if all_preds and all_targets:
+            print("Generating confusion matrix...")
+            all_preds_flat = np.concatenate(all_preds)
+            all_targets_flat = np.concatenate(all_targets)
+
+            cm = confusion_matrix(all_targets_flat, all_preds_flat, labels=[0, 1])
+
+            # Create figure
+            plt.figure(figsize=(8, 6))
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                       xticklabels=['Predicted: 0 (Off)', 'Predicted: 1 (On)'],
+                       yticklabels=['Actual: 0 (Off)', 'Actual: 1 (On)'])
+            plt.title(f'Confusion Matrix (Threshold={args.threshold})\nMean F1: {mean_f1:.4f}')
+            plt.ylabel('True Label')
+            plt.xlabel('Predicted Label')
+            plt.tight_layout()
+
+            # Save figure
+            cm_path = os.path.join(run_dir, "confusion_matrix.png")
+            plt.savefig(cm_path, dpi=150, bbox_inches='tight')
+            plt.close()
+
+            print(f"Confusion matrix saved to: {cm_path}")
 
         return {
             'mean_f1': mean_f1,
@@ -945,10 +969,28 @@ IMPORTANT:
 
     args = parser.parse_args()
 
-    # Handle special read-only mode: show results
+    # Handle special read-only mode: show results (doesn't need heavy imports)
     if args.show_results:
         show_results_summary(args.show_results)
         sys.exit(0)
+
+    # Import heavy dependencies after argparse (makes --help fast)
+    # This happens after show_results since that doesn't need these imports
+    import numpy as np
+    import torch
+    from torch.utils.data import DataLoader, Subset
+    from sklearn.metrics import f1_score, confusion_matrix
+    import pretty_midi
+    from tqdm import tqdm
+    import matplotlib
+    matplotlib.use('Agg')  # Use non-interactive backend
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
+    from data.dataset import MaestroDataset
+    from data.cached_dataset import CachedMaestroDataset
+    from train.train_transcriber import collate_fn
+    from models.transcription_model import TranscriptionModel
 
     # Model is required for all other modes
     if not args.model:

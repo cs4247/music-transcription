@@ -74,8 +74,18 @@ class CachedMaestroDataset(Dataset):
             )
 
         # Load from cache (fast!)
-        data = torch.load(cache_path)
-        return data['mel'], data['roll']
+        data = torch.load(cache_path, weights_only=False)
+
+        # Support pre-tokenized data (waveform + tokens), waveforms, or mels
+        if 'tokens' in data:
+            # Pre-tokenized: return waveform and tokens (skip piano roll)
+            return data['waveform'], data['tokens']
+        elif 'waveform' in data:
+            # Waveform only: return waveform and piano roll
+            return data['waveform'], data['roll']
+        else:
+            # Mel spectrogram: return mel and piano roll
+            return data['mel'], data['roll']
 
 
 class HybridMaestroDataset(Dataset):

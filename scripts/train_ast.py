@@ -33,6 +33,9 @@ Usage examples:
     # Full training on complete dataset (all years, all files)
     python scripts/train_ast.py --year all --subset-size 0 --num-epochs 30 --batch-size 4
 
+    # Use pre-cached dataset for MAXIMUM SPEED (10-50x faster data loading!)
+    python scripts/train_ast.py --cached-dir cached_dataset_waveform --num-epochs 30 --batch-size 8
+
     # With custom architecture
     python scripts/train_ast.py --decoder-layers 6 --decoder-dim 512 --decoder-heads 8
 """
@@ -128,6 +131,7 @@ class TrainConfig:
     # Performance optimizations
     chunk_length: Optional[float] = 30.0  # Chunk audio into 30s segments (None = full files)
     chunk_overlap: float = 0.0  # No overlap between chunks
+    cached_dir: Optional[str] = None  # Use cached dataset for faster training
 
     # Optional "notebook-like" sanity checks
     run_sanity_checks: bool = True
@@ -159,6 +163,7 @@ def parse_args() -> TrainConfig:
     # Performance options
     p.add_argument("--chunk-length", type=float, default=30.0, help='Chunk length in seconds (0 = full files)')
     p.add_argument("--chunk-overlap", type=float, default=0.0, help='Overlap ratio between chunks (0.0-1.0)')
+    p.add_argument("--cached-dir", type=str, default=None, help='Use pre-cached dataset (e.g., cached_dataset_waveform)')
 
     p.add_argument("--run-sanity-checks", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--sanity-max-len", type=int, default=256)
@@ -260,7 +265,11 @@ def main():
     )
 
     print("[info] Starting training...")
-    print(f"[info] Chunking: {'Enabled (' + str(cfg.chunk_length) + 's chunks)' if cfg.chunk_length else 'Disabled (full files)'}")
+    if cfg.cached_dir:
+        print(f"[info] Using cached dataset: {cfg.cached_dir}")
+    else:
+        print(f"[info] Chunking: {'Enabled (' + str(cfg.chunk_length) + 's chunks)' if cfg.chunk_length else 'Disabled (full files)'}")
+
     _trained_model = train_model(
         root_dir=cfg.root_dir,
         split=cfg.split,
@@ -280,6 +289,7 @@ def main():
         device=cfg.device,
         chunk_length=cfg.chunk_length,
         chunk_overlap=cfg.chunk_overlap,
+        cached_dir=cfg.cached_dir,
     )
 
     print("[info] Training complete! Model saved and ready for inference.")

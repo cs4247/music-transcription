@@ -27,12 +27,12 @@ def _process_single_chunk(args):
     Process a single chunk for parallel execution.
 
     Args:
-        args: tuple of (idx, dataset_params, cache_path, force, return_waveform)
+        args: tuple of (idx, dataset_params, cache_path, force, return_waveform, tokenize)
 
     Returns:
         tuple: (success: bool, skipped: bool)
     """
-    idx, dataset_params, cache_path, force, return_waveform = args
+    idx, dataset_params, cache_path, force, return_waveform, tokenize = args
 
     # Skip if already cached (unless force mode)
     if os.path.exists(cache_path) and not force:
@@ -45,8 +45,19 @@ def _process_single_chunk(args):
         # Load and process chunk
         data_tensor, roll_tensor = dataset[idx]
 
-        # Save to disk with appropriate key
-        if return_waveform:
+        # Pre-tokenize if requested (for AST models)
+        if tokenize:
+            from models.remi_tokenizer import REMITokenizer
+            tokenizer = REMITokenizer()
+            tokens = tokenizer.encode_from_pianoroll(roll_tensor, max_len=512)
+            token_tensor = torch.tensor(tokens, dtype=torch.long)
+
+            torch.save({
+                'waveform': data_tensor,
+                'tokens': token_tensor,
+                'roll': roll_tensor  # Keep roll for validation/metrics
+            }, cache_path)
+        elif return_waveform:
             torch.save({
                 'waveform': data_tensor,
                 'roll': roll_tensor
@@ -74,7 +85,8 @@ def preprocess_and_cache(
     split='train',
     force=False,
     num_workers=1,
-    return_waveform=False
+    return_waveform=False,
+    tokenize=False
 ):
     """
     Pre-process entire dataset and save to disk.
@@ -95,7 +107,12 @@ def preprocess_and_cache(
     """
 
     print(f"Loading dataset metadata for {split} split...")
-    data_type = "waveform" if return_waveform else "mel"
+    if tokenize:
+        data_type = "waveform+tokens"
+    elif return_waveform:
+        data_type = "waveform"
+    else:
+        data_type = "mel"
     print(f"Data type: {data_type}")
 
     dataset = MaestroDataset(
@@ -129,6 +146,7 @@ def preprocess_and_cache(
         'n_mels': n_mels,
         'hop_length': hop_length,
         'return_waveform': return_waveform,
+        'tokenize': tokenize,
         'data_type': data_type
     }
 
@@ -151,7 +169,7 @@ def preprocess_and_cache(
     }
 
     chunk_args = [
-        (idx, dataset_params, os.path.join(split_cache_dir, f'chunk_{idx:06d}.pt'), force, return_waveform)
+        (idx, dataset_params, os.path.join(split_cache_dir, f'chunk_{idx:06d}.pt'), force, return_waveform, tokenize)
         for idx in range(len(dataset))
     ]
 
@@ -201,7 +219,18 @@ def preprocess_and_cache(
                     data_tensor, roll_tensor = dataset[idx]
 
                     # Save to disk with appropriate key
-                    if return_waveform:
+                    if tokenize:
+                        from models.remi_tokenizer import REMITokenizer
+                        tokenizer = REMITokenizer()
+                        tokens = tokenizer.encode_from_pianoroll(roll_tensor, max_len=512)
+                        token_tensor = torch.tensor(tokens, dtype=torch.long)
+
+                        torch.save({
+                            'waveform': data_tensor,
+                            'tokens': token_tensor,
+                            'roll': roll_tensor
+                        }, cache_path)
+                    elif return_waveform:
                         torch.save({
                             'waveform': data_tensor,
                             'roll': roll_tensor
@@ -504,9 +533,6 @@ Examples:
   # Cache waveforms for AST/transformer models
   python preprocess_dataset.py --waveform -j 16
 
-  # Custom mel bins (IMPORTANT: must match your model!)
-  python preprocess_dataset.py --n_mels 320 -j 16
-
   # Run in background with automatic logging and parallel processing
   python preprocess_dataset.py --waveform -j 16 --background
 
@@ -521,11 +547,6 @@ Examples:
 
   # Force overwrite existing cache
   python preprocess_dataset.py --waveform --force -j 16
-
-IMPORTANT:
-  The n_mels parameter MUST match your model configuration!
-  For example, if your model uses TranscriptionModel(n_mels=320),
-  you must preprocess with --n_mels 320.
 
   Cache directory is auto-named based on n_mels to prevent conflicts:
     n_mels=229  -> cached_dataset/
@@ -576,6 +597,13 @@ IMPORTANT:
     data_type_group.add_argument(
         "--mel", action="store_true",
         help="Cache mel spectrograms for CNN-RNN models (default behavior)"
+    )
+
+    # Tokenization option (for AST models only)
+    parser.add_argument(
+        "--tokenize", action="store_true",
+        help="Pre-tokenize piano rolls to REMI tokens (eliminates CPU bottleneck during training). "
+             "Requires --waveform. Recommended for AST models!"
     )
 
     # Processing options
@@ -656,10 +684,18 @@ IMPORTANT:
 
     # Determine data type
     return_waveform = args.waveform  # Default is False (mel spectrograms)
+    tokenize = args.tokenize
+
+    # Validate tokenize requires waveform
+    if tokenize and not return_waveform:
+        print("Error: --tokenize requires --waveform")
+        sys.exit(1)
 
     # Auto-generate cache directory name based on data type and n_mels
     if args.cache_dir is None:
-        if return_waveform:
+        if tokenize:
+            args.cache_dir = "cached_dataset_tokens"
+        elif return_waveform:
             args.cache_dir = "cached_dataset_waveform"
         elif args.n_mels == 229:
             args.cache_dir = "cached_dataset"  # Default for backward compatibility
@@ -708,7 +744,12 @@ IMPORTANT:
     print(f"Source:        {args.root_dir}")
     print(f"Cache:         {args.cache_dir}")
     print(f"Splits:        {', '.join(splits)}")
-    print(f"Data type:     {'Waveform (AST)' if return_waveform else f'Mel spectrogram (CNN-RNN, n_mels={args.n_mels})'}")
+    if tokenize:
+        print(f"Data type:     Waveform + Pre-tokenized (AST optimized)")
+    elif return_waveform:
+        print(f"Data type:     Waveform (AST)")
+    else:
+        print(f"Data type:     Mel spectrogram (CNN-RNN, n_mels={args.n_mels})")
     print(f"Chunk length:  {args.chunk_length}s")
     print(f"Overlap:       {args.overlap * 100:.0f}%")
     print(f"Sample rate:   {args.sr}")
@@ -740,7 +781,8 @@ IMPORTANT:
                 split=split,
                 force=args.force,
                 num_workers=args.num_workers,
-                return_waveform=return_waveform
+                return_waveform=return_waveform,
+                tokenize=tokenize
             )
 
             # Track size for summary
@@ -783,11 +825,6 @@ IMPORTANT:
     print(f"    python main.py --cached_dir {args.cache_dir}")
     print(f"\n  Verify cache:")
     print(f"    python preprocess_dataset.py --show_cache_info {args.cache_dir}")
-
-    print(f"\nIMPORTANT:")
-    print(f"  Your model MUST use these parameters:")
-    print(f"    TranscriptionModel(n_mels={args.n_mels})")
-    print(f"  These parameters are validated by HybridMaestroDataset.")
 
     print("=" * 70)
 
